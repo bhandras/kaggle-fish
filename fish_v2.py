@@ -15,7 +15,7 @@ from sklearn.cross_validation import StratifiedKFold
 from sklearn.metrics import log_loss
 
 from keras.models import Model, Sequential
-from keras.layers import Input
+from keras.layers import Input, GlobalAveragePooling2D
 from keras.layers.core import Dense, Dropout, Flatten
 from keras.layers.convolutional import Convolution2D, MaxPooling2D, ZeroPadding2D
 
@@ -37,8 +37,8 @@ np.random.seed(2017)
 classes = ['ALB', 'BET', 'DOL', 'LAG', 'NoF', 'OTHER', 'SHARK', 'YFT']
 img_w = 299
 img_h = 299
-batch_size = 32
-nb_epoch = 30
+batch_size = 64
+nb_epoch = 50
 random_state = 42
 num_folds = 3
 
@@ -108,16 +108,26 @@ def create_model():
     for layer in model.layers:
         layer.trainable = False
 
-    top_model = Sequential()
-    top_model.add(Flatten(input_shape=model.output_shape[1:]))
-    top_model.add(Dense(256, activation='relu'))
-    top_model.add(Dropout(0.5))
-    top_model.add(Dense(8, activation='sigmoid'))
-
-    model = Model(input=model.input, output=top_model(model.output))
-    sgd = SGD(lr=1e-2, decay=1e-6, momentum=0.9, nesterov=True)
-    model.compile(optimizer=sgd, loss='categorical_crossentropy')
+    x = model.output
+    x = GlobalAveragePooling2D()(x)
+    x = Dense(1024, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    predictions = Dense(8, activation='softmax')(x)
+    
+    model = Model(input=model.input, output=predictions)
+    # sgd = SGD(lr=1e-2, decay=1e-6, momentum=0.9, nesterov=True)
+    model.compile(optimizer='rmsprop', loss='categorical_crossentropy')
     return model
+
+
+def save_model(model, index, cross=''):
+    json_string = model.to_json()
+    if not os.path.isdir('cache'):
+        os.mkdir('cache')
+    json_name = 'architecture' + str(index) + cross + '.json'
+    weight_name = 'model_weights' + str(index) + cross + '.h5'
+    open(os.path.join('cache', json_name), 'w').write(json_string)
+    model.save_weights(os.path.join('cache', weight_name), overwrite=True)
 
 
 def run_cross_validation_create_models(X_train, y_train, nfolds=10):
@@ -141,7 +151,7 @@ def run_cross_validation_create_models(X_train, y_train, nfolds=10):
         model = create_model()
         curr_fold += 1
         print('Start StratifiedKFiold # {}/{}'.format(curr_fold, nfolds))
-        print('Training split:', len(X_train[train_idxi]))
+        print('Training split:', len(X_train[train_idx]))
         print('Validation split:', len(X_train[valid_idx]))
 
         callbacks = [
@@ -166,8 +176,9 @@ def run_cross_validation_create_models(X_train, y_train, nfolds=10):
 
         score = log_loss(y_train[valid_idx], validation_predictions)
         print('Score log_loss: ', score)
-        sum_score += score * len(test_index)
+        sum_score += score * len(valid_idx)
         models.append(model)
+        save_model(model, curr_fold, 'xception1')
 
     score = sum_score / len(X_train)
     print("Log_loss train independent avg: ", score)
@@ -187,7 +198,7 @@ def merge_several_folds_mean(data, nfolds):
 def run_cross_validation_process_test(path, info_string, models):
     test_predictions = []
     X_test, y_test = load_test_data(path)
- 
+
     for i in range(len(models)):
         print('Testing model # {}/{}'.format(i + 1, len(models)))
         model_prediction = models[i].predict(X_test,
@@ -207,5 +218,5 @@ if __name__ == '__main__':
     info_string, models = run_cross_validation_create_models(X_train,
                                                              y_train,
                                                              num_folds)
-    run_cross_validation_process_test(test_stg1, info_string, models)
+    run_cross_validation_process_test('test_stg1', info_string, models)
 
