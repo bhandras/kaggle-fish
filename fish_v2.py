@@ -38,9 +38,9 @@ classes = ['ALB', 'BET', 'DOL', 'LAG', 'NoF', 'OTHER', 'SHARK', 'YFT']
 img_w = 299
 img_h = 299
 batch_size = 64
-nb_epoch = 50
+nb_epoch = 100
 random_state = 42
-num_folds = 3
+num_folds = 8
 
 
 def load_training_data(path):
@@ -56,6 +56,7 @@ def load_training_data(path):
         print('Loading class: {}'.format(class_folder))
 
         for image_path in image_paths:
+            print(image_path)
             img = image.load_img(image_path, target_size=(img_w, img_h))
             x = image.img_to_array(img)
             x = preprocess_input(x)
@@ -112,11 +113,13 @@ def create_model():
     x = GlobalAveragePooling2D()(x)
     x = Dense(1024, activation='relu')(x)
     x = Dropout(0.5)(x)
+    x = Dense(1024, activation='relu')(x)
+    x = Dropout(0.5)(x)
     predictions = Dense(8, activation='softmax')(x)
     
     model = Model(input=model.input, output=predictions)
     # sgd = SGD(lr=1e-2, decay=1e-6, momentum=0.9, nesterov=True)
-    model.compile(optimizer='rmsprop', loss='categorical_crossentropy')
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
 
@@ -155,7 +158,7 @@ def run_cross_validation_create_models(X_train, y_train, nfolds=10):
         print('Validation split:', len(X_train[valid_idx]))
 
         callbacks = [
-            EarlyStopping(monitor='val_loss', patience=3, verbose=0),
+            EarlyStopping(monitor='val_loss', patience=5, verbose=1),
             # TensorBoard(log_dir='./logs', histogram_freq=0, write_graph=True, write_images=False),
         ]
 
