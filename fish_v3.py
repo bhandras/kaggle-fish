@@ -1,3 +1,5 @@
+# used clipped data and the original data
+
 # coding: utf-8
 __author__ = 'bhandras: https://kaggle.com/bhandras'
 
