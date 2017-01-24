@@ -15,12 +15,13 @@ from keras.models import Model
 from keras.layers import Input, Dense, Flatten, Dropout
 
 from keras.callbacks import EarlyStopping, ModelCheckpoint, CSVLogger
+from sklearn.model_selection import KFold
 
 # NoF intentionally left out
-data_path = '../train'
-annotations_path = '../weijie_kaggle/NCFM/datasets'
-# classes = ['ALB', 'BET', 'DOL', 'LAG', 'OTHER', 'SHARK', 'YFT']
-classes = ['SHARK']
+training_data_path = 'train'
+annotations_path = 'weijie_kaggle/NCFM/datasets'
+classes = ['ALB', 'BET', 'DOL', 'LAG', 'OTHER', 'SHARK', 'YFT']
+# classes = ['SHARK']
 img_w = 299
 img_h = 299
 max_boxes = 4
@@ -146,7 +147,7 @@ if __name__ == '__main__':
         X_train, y_train = pickle.load(open('train.p', 'rb'))
         print('Finished loading train.p')
     else:
-        X_train, y_train = read_training_data('../train')
+        X_train, y_train = read_training_data(training_data_path)
         print('Saving train.p')
         pickle.dump((X_train, y_train), open('train.p', 'wb'), protocol=4)
 
@@ -154,16 +155,20 @@ if __name__ == '__main__':
     model = create_model()
 
     callbacks = [
-            EarlyStopping(monitor='loss', patience=early_stopping_patience, verbose=1),
+            EarlyStopping(monitor='val_loss', patience=early_stopping_patience, verbose=1),
             CSVLogger('bbox_regression_' + time_str + '.csv', separator=',',
                       append=False),
             ModelCheckpoint('weights.{epoch:02d}-{loss:.2f}.hdf5',
                             save_best_only=True,
-                            monitor='loss', verbose=1),
+                            monitor='val_loss', verbose=1),
     ]
-    model.fit(X_train,
-              y_train,
-              batch_size=batch_size,
-              nb_epoch=nb_epoch,
-              callbacks=callbacks,
-              verbose=1)
+
+    kf = KFold(n_splits=2)
+    for train_idx, test_idx in kf.split(X_train):
+        model.fit(X_train[train_idx],
+                  y_train[train_idx],
+                  batch_size=batch_size,
+                  nb_epoch=nb_epoch,
+                  validation_data=(X_train[test_idx], y_train[test_idx]),
+                  callbacks=callbacks,
+                  verbose=1)
