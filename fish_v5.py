@@ -182,9 +182,9 @@ def run_cross_validation_create_models_svm(X_train, y_train, nfolds=10):
         final_model = clf.fit(features, y_train[train_idx])
 
         features = []
-        for i in range(0, len(X_train[train_idx]), batch_size):
+        for i in range(0, len(X_train[valid_idx]), batch_size):
             batch_features = get_activations(model, -2,
-                                             X_train[train_idx][i:i+batch_size])
+                                             X_train[valid_idx][i:i+batch_size])
             features.extend(batch_features)
         min_max_scaler = preprocessing.MinMaxScaler()
         features = min_max_scaler.fit_transform(features)
@@ -196,10 +196,10 @@ def run_cross_validation_create_models_svm(X_train, y_train, nfolds=10):
         print('Score: ', cv_score)
 
         s = pickle.dumps(final_model)
-        print('Saving SVM # {}'.format(fold))
-        pickle.dump(final_model, open('svm' + str(fold) + '.p', 'wb'), protocol=4)
+        print('Saving SVM # {}'.format(curr_fold))
+        pickle.dump(final_model, open('svm' + str(curr_fold) + '.p', 'wb'), protocol=4)
         print('Saving done..')
-        models.append(model, final_model)
+        models.append((model, final_model))
     return models
 
 
@@ -278,15 +278,34 @@ def merge_several_folds_mean(data, nfolds):
     a /= nfolds
     return a.tolist()
 
+def load_svm_models():
+    models = []
+    curr = 0
+    for i in range(8):
+        model = create_model()
+        curr += 1
+        model.load_weights('cache_v3/model_weights'+str(curr)+'xception1.h5') 
+        svm_model = pickle.load(open('svm' + str(curr) + '.p', 'rb'))
+        models.append((model, svm_model))
+    return models
+
 
 def SVM_process_test_set(path, info_string, models):
     test_predictions = []
     X_test, id_test = load_test_data(path)
     for i in range(len(models)):
         print('Testing model # {}/{}'.format(i + 1, len(models)))
-        features = get_activations(models[i][0], -1, X_test)
+
+        features = []
+        for j in range(0, len(X_test), batch_size):
+            batch_features = get_activations(models[i][0], -2,
+                                             X_test[j:j+batch_size])
+            features.extend(batch_features)
         min_max_scaler = preprocessing.MinMaxScaler()
         features = min_max_scaler.fit_transform(features)
+
+        print('validation features shape: ', np.shape(features))
+ 
         model_prediction = models[i][1].predict_proba(features)
         test_predictions.append(model_prediction)
     y_pred = merge_several_folds_mean(test_predictions, len(models))
