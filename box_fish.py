@@ -199,7 +199,7 @@ def run_test(model, test_path):
 
 
 if __name__ == '__main__':
-    load_and_test_model('weights.11-424.77.hdf5', '../test_stg1')
+    # load_and_test_model('weights.11-424.77.hdf5', '../test_stg1')
     if os.path.isfile('train.p'):
         print('Loading train.p')
         X, y = pickle.load(open('train.p', 'rb'))
