@@ -189,16 +189,17 @@ def run_test(model, test_path):
     for image_path in image_paths:
         img = image.load_img(image_path, target_size=(img_w, img_h))
         x = image.img_to_array(img)
-        np.expand_dims(x, axis=0)
+        x = np.expand_dims(x, axis=0)
         x = preprocess_input(x)
         model_prediction = model.predict(x)
-        print(model_prediction)
-        save_img(img, model_prediction,
+        print(model_prediction[0])
+        save_img(img, model_prediction[0],
                  os.path.join(os.path.dirname(image_path),
                               'predicted_' + os.path.basename(image_path)))
 
 
 if __name__ == '__main__':
+    load_and_test_model('weights.11-424.77.hdf5', '../test_stg1')
     if os.path.isfile('train.p'):
         print('Loading train.p')
         X, y = pickle.load(open('train.p', 'rb'))
