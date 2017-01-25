@@ -27,7 +27,7 @@ img_h = 299
 max_boxes = 4
 batch_size = 64
 nb_epoch = 100
-early_stopping_patience = 4
+early_stopping_patience = 10
 
 def process_box_json(data, boxes):
     for item in data:
@@ -155,12 +155,12 @@ if __name__ == '__main__':
     model = create_model()
 
     callbacks = [
-            EarlyStopping(monitor='val_loss', patience=early_stopping_patience, verbose=1),
             CSVLogger('bbox_regression_' + time_str + '.csv', separator=',',
                       append=False),
             ModelCheckpoint('weights.{epoch:02d}-{loss:.2f}.hdf5',
                             save_best_only=True,
                             monitor='val_loss', verbose=1),
+            EarlyStopping(monitor='val_loss', patience=early_stopping_patience, verbose=1),
     ]
 
     kf = KFold(n_splits=2)
@@ -172,3 +172,5 @@ if __name__ == '__main__':
                   validation_data=(X_train[test_idx], y_train[test_idx]),
                   callbacks=callbacks,
                   verbose=1)
+    print('Exiting.. (https://github.com/fchollet/keras/issues/2110)')
+    time.sleep(0.5)
