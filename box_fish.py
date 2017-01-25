@@ -1,3 +1,7 @@
+'''
+    model ideas from:
+        https://www.kaggle.com/c/the-nature-conservancy-fisheries-monitoring/forums/t/27048/single-vgg16-pretrained-for-1-logloss
+'''
 import os
 import glob
 import json
@@ -12,22 +16,27 @@ from keras.applications.vgg16 import VGG16
 from keras.applications.imagenet_utils import preprocess_input
 
 from keras.models import Model
-from keras.layers import Input, Dense, Flatten, Dropout
+from keras.layers import Input, Dense, Flatten, Dropout, BatchNormalization
+from keras.layers.advanced_activations import PReLU
 
 from keras.callbacks import EarlyStopping, ModelCheckpoint, CSVLogger
-from sklearn.model_selection import KFold
+from sklearn.model_selection import train_test_split
+
+from PIL import Image, ImageDraw
 
 # NoF intentionally left out
 training_data_path = 'train'
 annotations_path = 'weijie_kaggle/NCFM/datasets'
-classes = ['ALB', 'BET', 'DOL', 'LAG', 'OTHER', 'SHARK', 'YFT']
+classes = ['ALB', 'BET', 'DOL', 'LAG', 'NoF', 'OTHER', 'SHARK', 'YFT']
 # classes = ['SHARK']
-img_w = 299
-img_h = 299
+img_w = 224
+img_h = 224
 max_boxes = 4
 batch_size = 64
 nb_epoch = 100
-early_stopping_patience = 10
+early_stopping_patience = 5
+debug = False
+
 
 def process_box_json(data, boxes):
     for item in data:
@@ -49,10 +58,27 @@ def process_box_json(data, boxes):
 def read_boxes():
     boxes = {}
     for c in classes:
-        with open(os.path.join(annotations_path, c + '.json')) as f:
+        json_file = os.path.join(annotations_path, c + '.json') 
+        if not os.path.isfile(json_file):
+            continue
+        with open(json_file) as f:
             data = json.load(f)
             process_box_json(data, boxes)
     return boxes
+
+
+def save_img(orig_img, bboxes, fname):
+    img = Image.new('RGB', (orig_img.width, orig_img.height), (255, 255, 255))
+    img.paste(orig_img)
+    draw = ImageDraw.Draw(img)
+    for i in range(0, len(bboxes), 4):
+        bbox = (bboxes[i + 0], bboxes[i + 1], bboxes[i + 2], bboxes[i + 3])
+        draw.line((bbox[0], bbox[1], bbox[2], bbox[1]), fill=(255, 0, 0))
+        draw.line((bbox[2], bbox[1], bbox[2], bbox[3]), fill=(255, 0, 0))
+        draw.line((bbox[2], bbox[3], bbox[0], bbox[3]), fill=(255, 0, 0))
+        draw.line((bbox[0], bbox[3], bbox[0], bbox[1]), fill=(255, 0, 0))
+    del draw
+    img.save(open(fname, 'wb'))
 
 
 def read_training_data(path):
@@ -71,17 +97,15 @@ def read_training_data(path):
 
         for image_path in image_paths:
             print('Reading: ', image_path)
+            image_name = os.path.basename(image_path)
+
             img = image.load_img(image_path)
             x_scale = float(img_w) / float(img.width)
             y_scale = float(img_h) / float(img.height)
             print('Scale factors (x, y): ', x_scale, y_scale)
-
             img = img.resize((img_h, img_w))
-            img = image.img_to_array(img)
-            X_train.append(img)
 
             has_boxes = False
-            image_name = os.path.basename(image_path)
             if class_folder in boxes:
                 if image_name in boxes[class_folder]:
                     image_boxes = boxes[class_folder][image_name][:max_boxes * 4]
@@ -95,8 +119,17 @@ def read_training_data(path):
 
                     y_train.append(image_boxes)
                     has_boxes = True
+
+                    # save resized image with boxes
+                    if debug:
+                        save_img(img, image_boxes,
+                                 os.path.join(os.path.dirname(image_path), 'alma_' +
+                                              image_name))
             if not has_boxes:
                 y_train.append(max_boxes * [0, 0, 0, 0])
+
+            img = image.img_to_array(img)
+            X_train.append(img)
             print(y_train[-1])
 
     X_train = np.array(X_train)
@@ -119,15 +152,19 @@ def create_model():
 
     x = model.output
     x = Flatten()(x)
-    x = Dense(1024, activation='relu')(x)
-    x = Dropout(0.5)(x)
-    x = Dense(1024, activation='relu')(x)
-    x = Dropout(0.5)(x)
+    x = Dropout(0.2)(x)
+    x = Dense(512)(x)
+    x = PReLU()(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.3)(x)
+    # x = Dense(512, activation='relu')(x)
+    # x = Dropout(0.2)(x)
     predictions = Dense(16, activation='linear')(x)
 
     model = Model(input=model.input, output=predictions)
     # sgd = SGD(lr=1e-2, decay=1e-6, momentum=0.9, nesterov=True)
-    model.compile(optimizer='adadelta', loss='mse', metrics=['accuracy'])
+    model.compile(optimizer='rmsprop', loss='mse', metrics=['accuracy'])
+    # model.summary()
     return model
 
 
@@ -141,36 +178,55 @@ def save_model(model, index, cross=''):
     model.save_weights(os.path.join('cache', weight_name), overwrite=True)
 
 
+def load_and_test_model(model_path, test_path):
+    model = create_model()
+    model.load_weights(model_path)
+    run_test(model, test_path)
+
+
+def run_test(model, test_path):
+    image_paths = glob.glob(os.path.join(test_path, '*.jpg'))
+    for image_path in image_paths:
+        img = image.load_img(image_path, target_size=(img_w, img_h))
+        x = image.img_to_array(img)
+        np.expand_dims(x, axis=0)
+        x = preprocess_input(x)
+        model_prediction = model.predict(x)
+        print(model_prediction)
+        save_img(img, model_prediction,
+                 os.path.join(os.path.dirname(image_path),
+                              'predicted_' + os.path.basename(image_path)))
+
+
 if __name__ == '__main__':
     if os.path.isfile('train.p'):
         print('Loading train.p')
-        X_train, y_train = pickle.load(open('train.p', 'rb'))
+        X, y = pickle.load(open('train.p', 'rb'))
         print('Finished loading train.p')
     else:
-        X_train, y_train = read_training_data(training_data_path)
+        X, y = read_training_data(training_data_path)
         print('Saving train.p')
-        pickle.dump((X_train, y_train), open('train.p', 'wb'), protocol=4)
+        pickle.dump((X, y), open('train.p', 'wb'), protocol=4)
 
     time_str = str(datetime.datetime.now()).replace(' ', '_')
     model = create_model()
 
     callbacks = [
-            CSVLogger('bbox_regression_' + time_str + '.csv', separator=',',
-                      append=False),
-            ModelCheckpoint('weights.{epoch:02d}-{loss:.2f}.hdf5',
+            # CSVLogger('bbox_regression_' + time_str + '.csv', separator=',', append=False),
+            ModelCheckpoint('weights.{epoch:02d}-{val_loss:.2f}.hdf5',
                             save_best_only=True,
                             monitor='val_loss', verbose=1),
-            EarlyStopping(monitor='val_loss', patience=early_stopping_patience, verbose=1),
+            EarlyStopping(monitor='val_loss', patience=early_stopping_patience),
     ]
 
-    kf = KFold(n_splits=2)
-    for train_idx, test_idx in kf.split(X_train):
-        model.fit(X_train[train_idx],
-                  y_train[train_idx],
-                  batch_size=batch_size,
-                  nb_epoch=nb_epoch,
-                  validation_data=(X_train[test_idx], y_train[test_idx]),
-                  callbacks=callbacks,
-                  verbose=1)
+    X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2)
+    model.fit(X_train,
+              y_train,
+              batch_size=batch_size,
+              nb_epoch=nb_epoch,
+              validation_data=(X_valid, y_valid),
+              callbacks=callbacks,
+              verbose=1)
+    run_test(model, 'test_stg1')
     print('Exiting.. (https://github.com/fchollet/keras/issues/2110)')
     time.sleep(0.5)
