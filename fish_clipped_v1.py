@@ -34,6 +34,8 @@ from keras.callbacks import TensorBoard, ModelCheckpoint
 from keras.applications.vgg16 import VGG16
 from keras.applications.vgg16 import preprocess_input
 import keras.backend as K
+from keras.layers.advanced_activations import PReLU
+from keras.layers.normalization import BatchNormalization
 
 # globals
 np.random.seed(2017)
@@ -43,8 +45,8 @@ img_h = 224
 batch_size = 64
 nb_epoch = 60
 random_state = 42
-num_folds = 2
-Temperature=10
+num_folds = 3
+Temperature=100
 
 def softsoftmax(x):
             e = K.exp(x*(1/Temperature) - K.max(x*(1/Temperature), axis=-1, keepdims=True))
@@ -119,11 +121,13 @@ def create_model():
         layer.trainable = False
 
     x = model.output
-    x = GlobalAveragePooling2D()(x)
-    x = Dense(1024, activation='relu')(x)
-    x = Dropout(0.5)(x)
-    x = Dense(1024, activation='relu')(x)
-    x = Dropout(0.5)(x)
+
+    x = Flatten()(x)
+    x = Dropout(0.2)(x)
+    x = Dense(512)(x)
+    x = PReLU()(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.3)(x)
     predictions = Dense(8, activation=softsoftmax)(x)
     
     model = Model(input=model.input, output=predictions)

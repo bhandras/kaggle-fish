@@ -4,8 +4,8 @@ import json
 from PIL import Image
 
 # NoF intentionally left out
-data_path = '../train'
-annotations_path = '../weijie_kaggle/NCFM/datasets'
+data_path = 'data/train'
+annotations_path = 'data/datasets'
 classes = ['ALB', 'BET', 'DOL', 'LAG', 'OTHER', 'SHARK', 'YFT']
 
 def process_annotations(data):
