@@ -44,9 +44,10 @@ classes = ['ALB', 'BET', 'DOL', 'LAG', 'NoF', 'OTHER', 'SHARK', 'YFT']
 img_w = 224
 img_h = 224
 batch_size = 64
-nb_epoch = 10
+nb_epoch = 100
 random_state = 42
 num_folds = 3
+dark_knowledge_file='submission_clip_folds_3_2017-01-25-15-40.csv'
 
 
 def load_training_data(path):
@@ -55,7 +56,7 @@ def load_training_data(path):
     t0 = time.time()
     print('Reading training data...')
 
-    soft_labels = pd.read_csv('submission_clip_folds_3_2017-01-25-15-40.csv')
+    soft_labels = pd.read_csv(dark_knowledge_file)
     values = soft_labels.ix[:, 'ALB':'YFT'].values
     image_names = soft_labels['image']
     ideal_prediction = {}
@@ -81,6 +82,7 @@ def load_training_data(path):
                 tmp[4] = 1
                 y_train.append(tmp)
 
+
     X_train = np.array(X_train)
     y_train = np.array(y_train, dtype=np.uint8)
 
@@ -101,7 +103,9 @@ def load_test_data(path):
     for image_path in image_paths:
         img = image.load_img(image_path, target_size=(img_w, img_h))
         x = image.img_to_array(img)
+        x = np.expand_dims(x, axis=0)
         x = preprocess_input(x)
+        x = np.squeeze(x)
         X_test.append(x)
         Id_test.append(os.path.basename(image_path))
 
@@ -125,9 +129,7 @@ def create_model():
     model = VGG16(include_top=False, weights='imagenet', input_tensor=input_tensor)
     for layer in range(len(model.layers)-2):
         model.layers[layer].trainable = False
- 
-    for layer in model.layers:
-        layer.trainable = False
+
 
     x = model.output
 
@@ -180,7 +182,10 @@ def run_cross_validation_create_models(X_train, y_train, nfolds=10):
         print('Validation split:', len(X_train[valid_idx]))
 
         callbacks = [
-            EarlyStopping(monitor='val_loss', patience=5, verbose=1),
+            EarlyStopping(monitor='val_loss', patience=50, verbose=1),
+            ModelCheckpoint("tmp/model_advanced-{epoch:02d}-{val_loss:.4f}.h5", monitor='val_loss', verbose=0,
+                            save_best_only=True, save_weights_only=False,
+                            mode='auto', period=1)
             # TensorBoard(log_dir='./logs', histogram_freq=0, write_graph=True, write_images=False),
         ]
 
@@ -235,6 +240,7 @@ def run_cross_validation_process_test(path, info_string, models):
     create_submission(y_test,
                       y_pred,
                       'loss_' + info_string + '_folds_' + str(len(models)))
+
 
 
 if __name__ == '__main__':
