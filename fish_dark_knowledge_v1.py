@@ -1,5 +1,3 @@
-# only used the original data
-
 # coding: utf-8
 __author__ = 'bhandras: https://kaggle.com/bhandras'
 
@@ -36,30 +34,34 @@ from keras.applications.vgg16 import preprocess_input
 import keras.backend as K
 from keras.layers.advanced_activations import PReLU
 from keras.layers.normalization import BatchNormalization
+from keras.regularizers import l1, activity_l1
+
+import pickle
 
 # globals
 np.random.seed(2017)
 classes = ['ALB', 'BET', 'DOL', 'LAG', 'NoF', 'OTHER', 'SHARK', 'YFT']
-img_w = 224 #xception=299
+img_w = 224
 img_h = 224
 batch_size = 64
-nb_epoch = 60
+nb_epoch = 100
 random_state = 42
 num_folds = 3
-Temperature=100
+dark_knowledge_file='submission_clip_folds_3_2017-01-25-15-40.csv'
 
-def softsoftmax(x):
-            e = K.exp(x*(1/Temperature) - K.max(x*(1/Temperature), axis=-1, keepdims=True))
-            s = K.sum(e, axis=-1, keepdims=True)
-            return e / s
 
 def load_training_data(path):
     X_train = []
     y_train = []
-    img_name=[]
     t0 = time.time()
     print('Reading training data...')
 
+    soft_labels = pd.read_csv(dark_knowledge_file)
+    values = soft_labels.ix[:, 'ALB':'YFT'].values
+    image_names = soft_labels['image']
+    ideal_prediction = {}
+    for item in range(len(image_names)):
+        ideal_prediction[image_names[item]] = values[item]
     for class_folder in classes:
         image_paths = glob.glob(os.path.join(path, class_folder, '*.jpg'))
         class_index = classes.index(class_folder)
@@ -73,17 +75,23 @@ def load_training_data(path):
             x = preprocess_input(x)
             x=np.squeeze(x)
             X_train.append(x)
-            y_train.append(class_index)
-            img_name.append(image_path)
+            if (image_path[-13:] in ideal_prediction):
+                y_train.append(ideal_prediction[image_path[-13:]])
+            else:
+                tmp=np.zeros(8)
+                tmp[4] = 1
+                y_train.append(tmp)
+
 
     X_train = np.array(X_train)
     y_train = np.array(y_train, dtype=np.uint8)
-    y_train = np_utils.to_categorical(y_train, 8)
 
     t1 = time.time()
     print('Reading finished: {} seconds'.format(round(t1 - t0, 2)))
     print('Training data shape:', X_train.shape)
-    return X_train, y_train, img_name
+    return X_train, y_train
+
+
 
 
 def load_test_data(path):
@@ -95,7 +103,9 @@ def load_test_data(path):
     for image_path in image_paths:
         img = image.load_img(image_path, target_size=(img_w, img_h))
         x = image.img_to_array(img)
+        x = np.expand_dims(x, axis=0)
         x = preprocess_input(x)
+        x = np.squeeze(x)
         X_test.append(x)
         Id_test.append(os.path.basename(image_path))
 
@@ -116,9 +126,10 @@ def create_submission(ids, predictions, info):
 
 def create_model():
     input_tensor = Input(shape=(img_w, img_h, 3))
-    model=VGG16(include_top=False, weights='imagenet', input_tensor=input_tensor)
-    for layer in model.layers:
-        layer.trainable = False
+    model = VGG16(include_top=False, weights='imagenet', input_tensor=input_tensor)
+    for layer in range(len(model.layers)-2):
+        model.layers[layer].trainable = False
+
 
     x = model.output
 
@@ -128,7 +139,7 @@ def create_model():
     x = PReLU()(x)
     x = BatchNormalization()(x)
     x = Dropout(0.3)(x)
-    predictions = Dense(8, activation=softsoftmax)(x)
+    predictions = Dense(8, activation='softmax', activity_regularizer=activity_l1(0.01))(x)
     
     model = Model(input=model.input, output=predictions)
     # sgd = SGD(lr=1e-2, decay=1e-6, momentum=0.9, nesterov=True)
@@ -146,7 +157,7 @@ def save_model(model, index, cross=''):
     model.save_weights(os.path.join('cache', weight_name), overwrite=True)
 
 
-def run_cross_validation_create_models(X_train, y_train, nfolds=2):
+def run_cross_validation_create_models(X_train, y_train, nfolds=10):
     datagen = image.ImageDataGenerator(rotation_range=20,
                                        width_shift_range=0.2,
                                        height_shift_range=0.2,
@@ -165,16 +176,17 @@ def run_cross_validation_create_models(X_train, y_train, nfolds=2):
 
     for train_idx, valid_idx in skf:
         model = create_model()
-        curr_fold += 1
+        #model.load_weights('cache_v3/model_weights'+str(curr_fold)+'xception1.h5')
         print('Start StratifiedKFiold # {}/{}'.format(curr_fold, nfolds))
         print('Training split:', len(X_train[train_idx]))
         print('Validation split:', len(X_train[valid_idx]))
 
         callbacks = [
-            #EarlyStopping(monitor='val_loss', patience=5, verbose=1),
-            # TensorBoard(log_dir='./logs', histogram_freq=0, write_graph=True, write_images=False),
-            ModelCheckpoint("tmp/model-{epoch:02d}-{val_loss:.4f}.h5", monitor='val_loss', verbose=0, save_best_only=True, save_weights_only=False,
+            EarlyStopping(monitor='val_loss', patience=50, verbose=1),
+            ModelCheckpoint("tmp/model_advanced-{epoch:02d}-{val_loss:.4f}.h5", monitor='val_loss', verbose=0,
+                            save_best_only=True, save_weights_only=False,
                             mode='auto', period=1)
+            # TensorBoard(log_dir='./logs', histogram_freq=0, write_graph=True, write_images=False),
         ]
 
         model.fit_generator(datagen.flow(X_train[train_idx],
@@ -196,7 +208,7 @@ def run_cross_validation_create_models(X_train, y_train, nfolds=2):
         print('Score log_loss: ', score)
         sum_score += score * len(valid_idx)
         models.append(model)
-        save_model(model, curr_fold, 'VGG1')
+        save_model(model, curr_fold, 'vgg16')
 
     score = sum_score / len(X_train)
     print("Log_loss train independent avg: ", score)
@@ -230,49 +242,14 @@ def run_cross_validation_process_test(path, info_string, models):
                       'loss_' + info_string + '_folds_' + str(len(models)))
 
 
-def save_knowledge(X_train, img_name):
-    train_predictions=[]
-    for i in range(len(models)):
-        print('Testing model # {}/{}'.format(i + 1, len(models)))
-        model_prediction = models[i].predict(X_train,
-                                             batch_size=batch_size,
-                                             verbose=1)
-        train_predictions.append(model_prediction)
-
-    y_pred = merge_several_folds_mean(train_predictions, len(models))
-    predictionsum = {}
-    count={}
-    print(len(y_pred))
-    for i in range(len(y_pred)):
-        name=img_name[i]
-        tmp=name[-13:]
-        if (tmp not in predictionsum):
-            predictionsum[tmp] = y_pred[i]
-            count[tmp] = 1
-        else:
-            for j in range(len(predictionsum[tmp])):
-                predictionsum[tmp][j] +=y_pred[i][j]
-            count[tmp] +=1
-    y_pred_img=[]
-    imgs = []
-    for key, value in count.items():
-        temp_predict=[]
-        for item in predictionsum[key]:
-            temp_predict.append(item/count[key])
-        y_pred_img.append(temp_predict)
-        imgs.append(key)
-
-    create_submission(imgs,
-                      y_pred_img,
-                      'clip_folds_' + str(len(models)))
-
 
 if __name__ == '__main__':
     print('Keras version: {}'.format(keras_version))
-    X_train, y_train, img_name = load_training_data('clipped')
+    X_train, y_train = load_training_data('data/train')
+
     info_string, models = run_cross_validation_create_models(X_train,
                                                              y_train,
                                                              num_folds)
-    save_knowledge(X_train, img_name)
-    #run_cross_validation_process_test('test_stg1', info_string, models)
+
+    run_cross_validation_process_test('data/test_stg1', info_string, models)
 
