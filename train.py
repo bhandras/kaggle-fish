@@ -312,6 +312,7 @@ if __name__ == '__main__':
 
         utils.save_array('X_train_feat.bcolz', X_train_feat)
         utils.save_array('X_test_feat.bcolz', X_test_feat)
+        utils.save_array('X_test.bcolz', X_test)
         utils.save_array('Id_test.bcolz', Id_test)
     else:
         print('Reading preprocessed data...')
