@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import glob
 import time
@@ -158,23 +160,19 @@ def predict(X, model, batch_size):
     return np.array(y_pred)
 
 
-def merge_folds_mean(data, nfolds):
-    a = np.array(data[0])
-    for i in range(1, nfolds):
-        a += np.array(data[i])
-    a /= nfolds
-    return a.tolist()
-
-
 def run_test(models, X_test, batch_size):
-    predictions = []
+    y_class = []
+    y_tl = []
+    y_wh = []
 
     for i in range(len(models)):
         print('Testing model # {}/{}'.format(i+1, len(models)))
-        predictions.append(models[i].predict(X_test,
-                                             batch_size=batch_size,
-                                             verbose=1)[0])
-    return merge_folds_mean(predictions, len(models))
+        y = models[i].predict(X_test, batch_size=batch_size, verbose=1)
+        y_class.append(y[0])
+        y_tl.append(y[1])
+        y_wh.append(y[2])
+
+    return np.mean(y_class, axis=0), np.mean(y_tl, axis=0), np.mean(y_wh, axis=0)
 
 
 def save_test_result(y_test, id_test, id_name, info_string, index):
@@ -372,5 +370,9 @@ if __name__ == '__main__':
 
         print('Testing...')
 
-        y_test = run_test([model], X_test_feat, config.batch_size)
+        y_test, y_test_bb_tl, y_test_bb_wh = run_test([model],
+                                                      X_test_feat,
+                                                      config.batch_size)
         save_test_result(y_test, Id_test, 'image', args.info, args.index)
+        utils.save_array('y_test_bb_tl.bcolz', y_test_bb_tl)
+        utils.save_array('y_test_bb_wh.bcolz', y_test_bb_wh)
