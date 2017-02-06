@@ -22,6 +22,7 @@ from keras.applications.imagenet_utils import preprocess_input
 from keras.optimizers import Adam, Nadam, Adamax, SGD
 from keras.callbacks import EarlyStopping, ModelCheckpoint, CSVLogger
 from keras.layers import Input, MaxPooling2D, GlobalAveragePooling2D, Dense, Flatten, Dropout, BatchNormalization
+from keras.regularizers import l1, activity_l1
 
 from sklearn.metrics import log_loss
 from keras.layers.advanced_activations import PReLU
@@ -204,18 +205,18 @@ def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
     inp = Input(shape=input_shape)
 
     # x = GlobalAveragePooling2D()(inp)
-    x = MaxPooling2D((4,4), strides=(4,4))(inp)
-    x = BatchNormalization()(x)
+    # x = MaxPooling2D((2,2))(inp)
+    x = BatchNormalization()(inp)
     x = Flatten()(x)
 
-    x = Dense(512)(x)
-    x = PReLU()(x)
+    x = Dense(256)(x)
     x = BatchNormalization()(x)
+    x = PReLU()(x)
     x = Dropout(dropout)(x)
 
-    x1 = Dense(128)(x)
-    x1 = PReLU()(x1)
+    x1 = Dense(256)(x)
     x1 = BatchNormalization()(x1)
+    x1 = PReLU()(x1)
     x1 = Dropout(dropout)(x1)
 
     x1 = Dense(128)(x1)
@@ -223,19 +224,20 @@ def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
     x1 = BatchNormalization()(x1)
     x1 = Dropout(dropout)(x1)
 
-    x2 = Dense(512)(x)
-    x2 = PReLU()(x2)
+    x2 = Dense(256)(x)
     x2 = BatchNormalization()(x2)
+    x2 = PReLU()(x2)
     x2 = Dropout(dropout)(x2)
 
-    x2 = Dense(512)(x2)
-    x2 = PReLU()(x2)
+    x2 = Dense(256)(x2)
     x2 = BatchNormalization()(x2)
+    x2 = PReLU()(x2)
     x2 = Dropout(dropout)(x2)
 
     bbox_predictions1 = Dense(2, activation='linear', name='bbox_tl')(x1)
-    bbox_predictions2 = Dense(2, activation='linear', name='bbox_br')(x1)
-    fish_predictions = Dense(8, activation='softmax', name='class')(x2)
+    bbox_predictions2 = Dense(2, activation='linear', name='bbox_wh')(x1)
+    fish_predictions = Dense(8, activation='softmax', name='class',
+                             activity_regularizer=activity_l1(0.01))(x2)
 
     '''
     eddigi legjobb: 640x480, maxpool, bn, flatten
