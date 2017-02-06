@@ -161,7 +161,7 @@ def predict(X, model, batch_size):
     return np.array(y_pred)
 
 
-def run_test(models, X_test, batch_size):
+def run_test(models, X_test, batch_size, bb=False):
     y_class = []
     y_tl = []
     y_wh = []
@@ -169,9 +169,14 @@ def run_test(models, X_test, batch_size):
     for i in range(len(models)):
         print('Testing model # {}/{}'.format(i+1, len(models)))
         y = models[i].predict(X_test, batch_size=batch_size, verbose=1)
-        y_class.append(y[0])
-        y_tl.append(y[1])
-        y_wh.append(y[2])
+        if bb:
+            y_class.append(y[0])
+            y_tl.append(y[1])
+            y_wh.append(y[2])
+        else:
+            y_class.append(y)
+            y_tl.append([0, 0])
+            y_wh.append([0, 0])
 
     return np.mean(y_class, axis=0), np.mean(y_tl, axis=0), np.mean(y_wh, axis=0)
 
@@ -201,7 +206,7 @@ def save_model(model, history, info_string, index):
     pickle.dump(history, open(name + '_history.p', 'wb'), protocol=4)
 
 
-def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
+def create_model_bb(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
     inp = Input(shape=input_shape)
 
     # x = GlobalAveragePooling2D()(inp)
@@ -209,12 +214,12 @@ def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
     x = BatchNormalization()(inp)
     x = Flatten()(x)
 
-    x = Dense(256)(x)
+    x = Dense(512)(x)
     x = BatchNormalization()(x)
     x = PReLU()(x)
     x = Dropout(dropout)(x)
-
-    x1 = Dense(256)(x)
+    
+    x1 = Dense(512)(x)
     x1 = BatchNormalization()(x1)
     x1 = PReLU()(x1)
     x1 = Dropout(dropout)(x1)
@@ -224,7 +229,7 @@ def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
     x1 = BatchNormalization()(x1)
     x1 = Dropout(dropout)(x1)
 
-    x2 = Dense(256)(x)
+    x2 = Dense(512)(x)
     x2 = BatchNormalization()(x2)
     x2 = PReLU()(x2)
     x2 = Dropout(dropout)(x2)
@@ -256,11 +261,43 @@ def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
                                      bbox_predictions1,
                                      bbox_predictions2]) 
 
+
     sgd = SGD(lr=lr, decay=decay, momentum=0.9, nesterov=True)
 
     model.compile(optimizer=sgd,
                   loss=['categorical_crossentropy', 'mse', 'mse'],
-                  loss_weights=[1.0, 0.00001, 0.00001],
+                  loss_weights=[1.0, 0.001, 0.001],
+                  metrics=['accuracy'])
+    return model
+
+
+
+def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
+    inp = Input(shape=input_shape)
+
+    # x = GlobalAveragePooling2D()(inp)
+    # x = MaxPooling2D((2,2))(inp)
+    x = BatchNormalization()(inp)
+    x = Flatten()(x)
+
+    x = Dense(128)(x)
+    x = BatchNormalization()(x)
+    x = PReLU()(x)
+    x = Dropout(dropout)(x)
+
+    x = Dense(128)(x)
+    x = BatchNormalization()(x)
+    x = PReLU()(x)
+    x = Dropout(dropout)(x)
+
+    fish_predictions = Dense(8, activation='softmax', name='class',
+                             activity_regularizer=activity_l1(0.01))(x)
+
+    model = Model(input=inp, output=fish_predictions) 
+    sgd = SGD(lr=lr, decay=decay, momentum=0.9, nesterov=True)
+
+    model.compile(optimizer=sgd,
+                  loss=['categorical_crossentropy'],
                   metrics=['accuracy'])
     return model
 
@@ -270,12 +307,11 @@ def get_class_w(y):
     max_factor = max([len(np.where(y.argmax(1) == i)[0]) for i in range(len(classes))])
 
     for i in range(len(classes)):
-        l = len(np.where(y.argmax(1) == i)[0])
-        f = max_factor / l
-        class_w[i] = f
-        wf = f / class_w[i]
-        percent = l / (len(y) / 100.)
-        print('class: {}\t %: {:.2f}\t n: {} [{:.2f} -> {:.2f}]'.format(classes[i], percent, l, f, wf))
+        n = len(np.where(y.argmax(1) == i)[0])
+        class_w[i] = max_factor / n
+        percent = n / (len(y) / 100.0)
+        print('{}\t{:.2f}%\t\tn: {}\t\tw: {:.2f}'
+              .format(classes[i], percent, n, class_w[i]))
     return class_w
 
 
@@ -285,6 +321,7 @@ if __name__ == '__main__':
                         action='store_true')
     parser.add_argument('--info', help='Model info string', default='fish')
     parser.add_argument('--index', help='Model index', default=0)
+    parser.add_argument('--bb', help='Train BB regressor', default=False)
     args = parser.parse_args()
 
     if args.preprocess:
@@ -349,22 +386,38 @@ if __name__ == '__main__':
 
         # create and train model
         print('Creating model...')
-        model = create_model(np.shape(X_train_feat)[1:],
-                             dropout=config.dropout,
-                             lr=config.lr,
-                             decay=config.decay)
+        if args.bb:
+            model = create_model_bb(np.shape(X_train_feat)[1:],
+                                    dropout=config.dropout,
+                                    lr=config.lr,
+                                    decay=config.decay)
+        else:
+             model = create_model(np.shape(X_train_feat)[1:],
+                                 dropout=config.dropout,
+                                 lr=config.lr,
+                                 decay=config.decay)
         model.summary()
 
         print('Training...')
-        history = model.fit(X_train_feat[train_idx],
-                            [y_train[train_idx], y_box_tl[train_idx], y_box_wh[train_idx]],
-                            batch_size=config.batch_size,
-                            nb_epoch=config.nb_epoch,
-                            validation_data=(X_train_feat[valid_idx],
-                                             [y_train[valid_idx],
-                                              y_box_tl[valid_idx],
-                                              y_box_wh[valid_idx]]),
-                            verbose=1, class_weight=class_w)
+        if args.bb:
+            history = model.fit(X_train_feat[train_idx],
+                                [y_train[train_idx], y_box_tl[train_idx], y_box_wh[train_idx]],
+                                batch_size=config.batch_size,
+                                nb_epoch=config.nb_epoch,
+                                validation_data=(X_train_feat[valid_idx],
+                                                 [y_train[valid_idx],
+                                                  y_box_tl[valid_idx],
+                                                  y_box_wh[valid_idx]]),
+                                verbose=1, class_weight=class_w)
+        else:
+            history = model.fit(X_train_feat[train_idx],
+                                y_train[train_idx],
+                                batch_size=config.batch_size,
+                                nb_epoch=config.nb_epoch,
+                                validation_data=(X_train_feat[valid_idx],
+                                                 y_train[valid_idx]),
+                                verbose=1, class_weight=class_w)
+
 
         print('Training finished')
         print('Saving model...')

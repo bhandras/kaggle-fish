@@ -11,8 +11,8 @@ random_state = 42
 # model parameters
 validation_split=0.3
 batch_size = 32
-nb_epoch = 35
+nb_epoch = 15
 early_stopping_patience = 5
 dropout = 0.7
-lr = 0.04
+lr = 0.005
 decay = 1e-6
