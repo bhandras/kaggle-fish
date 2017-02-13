@@ -39,17 +39,17 @@ def read_bbox_json(filename):
     with open(filename) as f:
         json_data = json.load(f)
         for item in json_data:
-            fn = os.path.basename(item['filename'])
+            fn = item['filename']
             cnt = 0
             for annotation in item['annotations']:
                 x = annotation['x']
                 y = annotation['y']
                 w = annotation['width']
                 h = annotation['height']
-                c = annotation['class']
-                if not c in boxes:
-                    boxes[c] = {}
-                if not fn in boxes[c]:
-                    boxes[c][fn] = []
-                boxes[c][fn].append([x, y, w, h])
+                label = annotation['class']
+                if not fn in boxes:
+                    boxes[fn] = {}
+                if not label in boxes[fn]:
+                    boxes[fn][label] = []
+                boxes[fn][label].append([x, y, w, h])
     return boxes
