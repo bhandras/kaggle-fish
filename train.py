@@ -101,9 +101,8 @@ def create_model_bb(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
 def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
     inp = Input(shape=input_shape)
 
-    # x = GlobalAveragePooling2D()(inp)
-    # x = MaxPooling2D((2,2))(inp)
     '''
+    # fully convolutional
     x = BatchNormalization()(inp)
     x = Convolution2D(256, 3, 3, border_mode='same')(x)
     x = PReLU()(x)
@@ -131,21 +130,16 @@ def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
     x = BatchNormalization()(inp)
     x = Flatten()(x)
 
-    x = Dense(1024)(x)
-    x = BatchNormalization()(x)
-    x = PReLU()(x)
-    x = Dropout(dropout)(x)
-
-    x = Dense(1024)(x)
-    x = BatchNormalization()(x)
-    x = PReLU()(x)
-    x = Dropout(dropout)(x)
-    '''
     x = Dense(512)(x)
     x = BatchNormalization()(x)
     x = PReLU()(x)
     x = Dropout(dropout)(x)
-    '''
+
+    x = Dense(512)(x)
+    x = BatchNormalization()(x)
+    x = PReLU()(x)
+    x = Dropout(dropout)(x)
+    
     fish_predictions = Dense(8, activation='softmax', name='class')(x)
     model = Model(input=inp, output=fish_predictions) 
     sgd = SGD(lr=lr, decay=decay, momentum=0.9, nesterov=True)
@@ -179,8 +173,10 @@ def run_test(models, X, ids, batch_size, id_name, bb, info_string, index):
         else:
             df_labels = pd.concat([df_labels, pd.DataFrame(y, columns=classes)])
     df_labels.loc[:, id_name] = pd.Series(np.tile(ids, len(models)))
+    df_labels = df_labels.groupby(id_name).mean().reset_index()
     if bb:
         df_bboxes.loc[:, id_name] = pd.Series(np.tile(ids, len(models)))
+        df_boxes = df_boxes.groupby(id_name).mean().reset_index()
 
     print(df_labels.head())
     # save df_labels
@@ -277,33 +273,37 @@ if __name__ == '__main__':
                              decay=config.decay)
         model.summary()
 
-        if not args.test:
-            print('Training...')
-            if args.bb:
-                history = model.fit(X_train_feat[train_idx],
-                                    [y_train[train_idx], y_box_tl[train_idx], y_box_wh[train_idx]],
-                                    batch_size=config.batch_size,
-                                    nb_epoch=config.nb_epoch,
-                                    validation_data=(X_train_feat[valid_idx],
-                                                     [y_train[valid_idx],
-                                                      y_box_tl[valid_idx],
-                                                      y_box_wh[valid_idx]]),
-                                    verbose=1, class_weight=class_w,
-                                    callbacks=callbacks)
-            else:
-                history = model.fit(X_train_feat[train_idx],
-                                    y_train[train_idx],
-                                    batch_size=config.batch_size,
-                                    nb_epoch=config.nb_epoch,
-                                    validation_data=(X_train_feat[valid_idx],
-                                                     y_train[valid_idx]),
-                                    verbose=1, class_weight=class_w,
-                                    callbacks=callbacks)
+    if not args.test:
+        print('Training...')
+        if args.bb:
+            history = model.fit(X_train_feat[train_idx],
+                                [y_train[train_idx], y_box_tl[train_idx], y_box_wh[train_idx]],
+                                batch_size=config.batch_size,
+                                nb_epoch=config.nb_epoch,
+                                validation_data=(X_train_feat[valid_idx],
+                                                 [y_train[valid_idx],
+                                                  y_box_tl[valid_idx],
+                                                  y_box_wh[valid_idx]]),
+                                verbose=1,
+                                class_weight=class_w,
+                                callbacks=callbacks)
+        else:
+            history = model.fit(X_train_feat[train_idx],
+                                y_train[train_idx],
+                                batch_size=config.batch_size,
+                                nb_epoch=config.nb_epoch,
+                                validation_data=(X_train_feat[valid_idx],
+                                                 y_train[valid_idx]),
+                                verbose=1,
+                                class_weight=class_w,
+                                callbacks=callbacks)
 
 
         print('Training finished')
         print('Saving model...')
         save_model(model, history.history, args.info, args.index)
+    else:
+        model.load_weights('cache/fish_0_weights.h5')
 
     print('Testing...')
     df_y_test, df_y_test_bbox = run_test([model],
@@ -314,4 +314,4 @@ if __name__ == '__main__':
                                          args.bb,
                                          args.info,
                                          args.index)
-    utils.save_array('y_test_bbox.bcolz', np.array(df_y_test_bbox))
+    utils.save_array('y_test_bbox.bc', np.array(df_y_test_bbox))
