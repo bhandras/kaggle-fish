@@ -80,7 +80,9 @@ class ImageAugmenter(object):
                 label = os.path.dirname(path)
                 if label != '':
                     label = self.class_labels.index(label)
-                    label = np_utils.to_categorical([label], len(self.class_labels))
+                    label = np_utils.to_categorical([label],
+                                                    len(self.class_labels))
+                    label = label[0]
             else:
                 label = os.path.dirname(path)
         return label
