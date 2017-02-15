@@ -24,85 +24,21 @@ from keras.optimizers import Adam, Nadam, Adamax, SGD
 from keras.callbacks import EarlyStopping, ModelCheckpoint, CSVLogger, LearningRateScheduler
 from keras.layers import Input, Convolution2D, MaxPooling2D, GlobalAveragePooling2D, Dense, Flatten, Dropout, BatchNormalization, Activation
 from keras.regularizers import l1, activity_l1
+from keras.utils.generic_utils import Progbar
 
 from sklearn.metrics import log_loss
 from keras.layers.advanced_activations import PReLU
 from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
-
+from sklearn.metrics import log_loss
 
 classes = ['ALB', 'BET', 'DOL', 'LAG', 'NoF', 'OTHER', 'SHARK', 'YFT']
-
-
-def create_model_bb(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
-    inp = Input(shape=input_shape)
-
-    # x = GlobalAveragePooling2D()(inp)
-    # x = MaxPooling2D((2,2))(inp)
-    x = BatchNormalization()(inp)
-    x = Flatten()(x)
-
-    x = Dense(512)(x)
-    x = BatchNormalization()(x)
-    x = PReLU()(x)
-    x = Dropout(dropout)(x)
-
-    x1 = Dense(512)(x)
-    x1 = BatchNormalization()(x1)
-    x1 = PReLU()(x1)
-    x1 = Dropout(dropout)(x1)
-
-    x1 = Dense(128)(x1)
-    x1 = PReLU()(x1)
-    x1 = BatchNormalization()(x1)
-    x1 = Dropout(dropout)(x1)
-
-    x2 = Dense(512)(x)
-    x2 = BatchNormalization()(x2)
-    x2 = PReLU()(x2)
-    x2 = Dropout(dropout)(x2)
-
-    x2 = Dense(256)(x2)
-    x2 = BatchNormalization()(x2)
-    x2 = PReLU()(x2)
-    x2 = Dropout(dropout)(x2)
-
-    bbox_predictions1 = Dense(2, activation='linear', name='bbox_tl')(x1)
-    bbox_predictions2 = Dense(2, activation='linear', name='bbox_wh')(x1)
-    fish_predictions = Dense(8, activation='softmax', name='class',
-                             activity_regularizer=activity_l1(0.01))(x2)
-
-    '''
-    eddigi legjobb: 640x480, maxpool, bn, flatten
-    x1: 256,prelu,bn,do; 256,prelu,bn,do,bp1,bp2
-    x2: 256,prelu,bn,do; 256,prelu,bn,do,fp
-    do: 0.5
-    lr=0.05, decay=1e-6
-    epoch: 10
-
-    other best: save_model(model, 6, 'val_class_acc_9078')
-    epoch: 40
-    dropout=0.7, lr=0.04, decay=1e-6
-    '''
-
-    model = Model(input=inp, output=[fish_predictions,
-                                     bbox_predictions1,
-                                     bbox_predictions2]) 
-
-
-    sgd = SGD(lr=lr, decay=decay, momentum=0.9, nesterov=True)
-
-    model.compile(optimizer=sgd,
-                  loss=['categorical_crossentropy', 'mse', 'mse'],
-                  loss_weights=[1.0, 0.001, 0.001],
-                  metrics=['accuracy'])
-    return model
 
 
 def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
     inp = Input(shape=input_shape)
     nf = 256
-    # fully convolutional
-    '''
+
+    # fully convolutional 
     x = BatchNormalization()(inp)
     x = Convolution2D(nf, 3, 3, border_mode='same', activation='relu')(x)
     # x = PReLU()(x)
@@ -140,7 +76,7 @@ def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
     x = PReLU()(x)
     x = Dropout(dropout)(x)
     fish_predictions = Dense(8, activation='softmax', name='class')(x)
-
+    '''
     model = Model(input=inp, output=fish_predictions) 
     sgd = SGD(lr=lr, decay=decay, momentum=0.9, nesterov=True)
 
@@ -164,6 +100,8 @@ def run_test(models, X, ids, batch_size, id_name, bb, info_string, index):
     for i in range(len(models)):
         print('Testing model # {}/{}'.format(i+1, len(models)))
         y = models[i].predict(X, batch_size=batch_size, verbose=1)
+        # y = models[i].predict_proba(X, batch_size=batch_size)
+
         if bb:
             df_labels = pd.concat([df_labels,
                                    pd.DataFrame(y[0], columns=df_labels.columns)])
@@ -203,7 +141,6 @@ def save_model(model, history, info_string, index):
     pickle.dump(history, open(name + '_history.p', 'wb'), protocol=4)
 
 
-
 def get_class_w(y):
     class_w = {}
     max_factor = max([len(np.where(y.argmax(1) == i)[0]) for i in range(len(classes))])
@@ -221,14 +158,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--info', help='Model info string', default='fish')
     parser.add_argument('--index', help='Model index', default=0)
-    parser.add_argument('--bb', help='Train BB regressor', default=False)
     parser.add_argument('--test', help='Test only', default=False)
     args = parser.parse_args()
 
     print('Reading preprocessed data...')
     X_train_feat = bcolz.open('train_images_feat.bc')
     y_train = bcolz.open('train_labels.bc')
-    y_train_box = bcolz.open('train_bboxes.bc')
     X_test_feat = bcolz.open('test_stg1_images_feat.bc')
     Id_test = bcolz.open('test_stg1_ids.bc')
     print('Done')
@@ -248,70 +183,95 @@ if __name__ == '__main__':
     train_idx, valid_idx = next(ss.split(X_train_feat, np.argmax(y_train, 1)))
     print('split',len(train_idx), len(valid_idx))
     # get class weights
-    class_w = get_class_w(y_train[train_idx])
-
-    # separate bboxes
-    y_box_tl = []
-    y_box_wh = []
-    for item in y_train_box:
-        y_box_tl.append([item[0], item[1]])
-        y_box_wh.append([item[2], item[3]])
-    y_box_tl = np.array(y_box_tl)
-    y_box_wh = np.array(y_box_wh)
+    # class_w = get_class_w(y_train[train_idx])
 
     # create and train model
     print('Creating model...')
-    if args.bb:
-        model = create_model_bb(np.shape(X_train_feat)[1:],
-                                dropout=config.dropout,
-                                lr=config.lr,
-                                decay=config.decay)
-    else:
-        model = create_model(np.shape(X_train_feat)[1:],
-                             dropout=config.dropout,
-                             lr=config.lr,
-                             decay=config.decay)
-        model.summary()
+    model = create_model(np.shape(X_train_feat)[1:],
+                         dropout=config.dropout,
+                         lr=config.lr,
+                         decay=config.decay)
+    model.summary()
+
+    def adaboostweight(weight, errors, corrects):
+        Z = 0
+        for i in range(len(weight)):
+            eps = 0.000001 + weight[i] * errors[i] / (errors[i] + corrects[i])
+            alfa = 0.5 * np.log((1 - eps) / eps)
+            weight[i] *= np.exp(alfa * np.sign(errors[i] - corrects[i]))
+        Z = np.sum(weight)
+        return weight / Z
 
     if not args.test:
         print('Training...')
-        if args.bb:
-            history = model.fit(X_train_feat[train_idx],
-                                [y_train[train_idx], y_box_tl[train_idx], y_box_wh[train_idx]],
-                                batch_size=config.batch_size,
-                                nb_epoch=config.nb_epoch,
-                                validation_data=(X_train_feat[valid_idx],
-                                                 [y_train[valid_idx],
-                                                  y_box_tl[valid_idx],
-                                                  y_box_wh[valid_idx]]),
-                                verbose=1,
-                                class_weight=class_w,
-                                callbacks=callbacks)
-        else:
+        print('dim:', y_train[train_idx].shape)
+        class_w = np.array(len(classes) * [1./len(classes)])
+        y_valid = np.asarray(y_train[valid_idx][:])
+        print('y_valid', y_valid.shape)
+        true_l = np.argmax(y_valid, axis=1)
+
+        for epoch in range(config.nb_epoch):
+            learning_rate = config.lr
+            if epoch >= 4:
+                learning_rate = 0.001
+            print('Epoch {} of {}'.format(epoch + 1, config.nb_epoch))
             history = model.fit(X_train_feat[train_idx],
                                 y_train[train_idx],
                                 batch_size=config.batch_size,
-                                nb_epoch=config.nb_epoch,
-                                validation_data=(X_train_feat[valid_idx],
-                                                 y_train[valid_idx]),
+                                nb_epoch=1,
                                 verbose=1,
-                                class_weight=class_w,
-                                callbacks=callbacks)
+                                class_weight=class_w)
+            print('Validation...')
 
+            pred = model.predict(X_train_feat[valid_idx],
+                                 batch_size=config.batch_size,
+                                 verbose=1)
+            fp = np.zeros(len(classes))
+            fn = np.zeros(len(classes))
+            tp = np.zeros(len(classes))
+            tn = np.zeros(len(classes))
+
+            pred_l = np.argmax(pred, axis=1)
+            for i in range(len(pred_l)):
+                if pred_l[i] != true_l[i]:
+                    fp[pred_l[i]] += 1
+                    fn[true_l[i]] += 1
+                else:
+                    tp[pred_l[i]] += 1
+            print('tp', [item for item in zip(classes, tp)])
+            print('fn', [item for item in zip(classes, fn)])
+            print('fp', [item for item in zip(classes, fp)])
+
+            recall = np.zeros(len(classes))
+            accuracy = np.zeros(len(classes))
+            precision = np.zeros(len(classes))
+
+            for i in range(len(classes)):
+                tn[i] = len(pred) - (tp[i] + fn[i] + fp[i])
+                recall[i] = tp[i] / (tp[i] + fn[i])
+                accuracy[i] = (tp[i] + tn[i]) / (tp[i] + tn[i] + fp[i] + fn[i])
+                precision[i] = tp[i] / (tp[i] + fp[i])
+
+            print('rec:', [item for item in zip(classes, recall)])
+            print('pre:', [item for item in zip(classes, precision)])
+            print('acc:', [item for item in zip(classes, accuracy)])
+
+            print('val_loss:', log_loss(y_valid, pred))
+            class_w = adaboostweight(class_w, fn, tp)
+            print('class_w:', [item for item in zip(classes, class_w)])
 
         print('Training finished')
         print('Saving model...')
         save_model(model, history.history, args.info, args.index)
     else:
-        model.load_weights('cache/fish_0_weights.h5')
+        print('load test model here...')
 
     print('Testing...')
-    df_y_test, df_y_test_bbox = run_test([model],
-                                         X_test_feat,
-                                         Id_test,
-                                         config.batch_size,
-                                         'image',
-                                         args.bb,
-                                         args.info,
-                                         args.index)
-    utils.save_array('y_test_bbox.bc', np.array(df_y_test_bbox))
+    df_y_test, _ = run_test([model],
+                            X_test_feat,
+                            Id_test,
+                            config.batch_size,
+                            'image',
+                            False,
+                            args.info,
+                            args.index)
