@@ -99,9 +99,10 @@ class ImageAugmenter(object):
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             t0 = time.time()
+
             futures = {
                 executor.submit(self.read_image, img_path):
-                img_path for img_path in self.images
+                img_path for img_path in np.random.permutation(self.images)
             }
             for f in concurrent.futures.as_completed(futures):
                 img_path = futures[f]
@@ -132,7 +133,7 @@ class ImageAugmenter(object):
                 t0 = time.time()
                 futures = {
                     executor.submit(self.augment, img_path):
-                    img_path for img_path in self.images
+                    img_path for img_path in np.random.permutaion(self.images)
                 }
 
                 for f in concurrent.futures.as_completed(futures):
@@ -225,8 +226,9 @@ def box_zoom_rotate_translate(img, bb, x_scale_range,
         None
     """
 
-    sx = np.random.uniform(1, x_scale_range)
-    sy = np.random.uniform(1, y_scale_range)
+    sx = sy = np.random.uniform(1, (x_scale_range + y_scale_range) / 2.0)
+    # sx = np.random.uniform(1, x_scale_range)
+    # sy = np.random.uniform(1, y_scale_range)
     theta = np.random.uniform(-rotation_range, rotation_range)
     rtx = np.random.uniform(-translation_range, translation_range)
     rty = np.random.uniform(-translation_range, translation_range)
@@ -330,10 +332,10 @@ augmenter = ImageAugmenter('test_stg1', classes)
 augmenter.img_w = config.img_w
 augmenter.img_h = config.img_h
 augmenter.factor = config.augmentation_factor
-augmenter.rotation_range = config.augmentation_rotation_range
-augmenter.translation_range = config.augmentation_translation_range
-augmenter.x_scale_range = config.augmentation_x_scale_range
-augmenter.y_scale_range = config.augmentation_y_scale_range
+augmenter.rotation_range = 0.1 # config.augmentation_rotation_range
+augmenter.translation_range = 10 # config.augmentation_translation_range
+augmenter.x_scale_range = 1.1 # config.augmentation_x_scale_range
+augmenter.y_scale_range = 1.1 # config.augmentation_y_scale_range
 
 test_images, test_bboxes, test_labels, test_ids = augmenter.run(save=True)
 print('Test images shape: ', test_images.shape)

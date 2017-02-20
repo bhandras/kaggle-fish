@@ -35,45 +35,44 @@ classes = ['ALB', 'BET', 'DOL', 'LAG', 'NoF', 'OTHER', 'SHARK', 'YFT']
 
 
 def create_model(input_shape, dropout = 0.6, lr=0.001, decay=1e-6):
-    inp = Input(shape=input_shape)
+    inp = Input(shape=input_shape) 
+    x = BatchNormalization()(inp)
+
     nf = 256
 
     # fully convolutional 
-    x = BatchNormalization()(inp)
     x = Convolution2D(nf, 3, 3, border_mode='same', activation='relu')(x)
     # x = PReLU()(x)
+    # x = MaxPooling2D((2, 2))(x)
     x = BatchNormalization()(x)
-    x = MaxPooling2D((2, 2))(x)
 
-    x = BatchNormalization()(x)
     x = Convolution2D(nf, 3, 3, border_mode='same', activation='relu')(x)
     # x = PReLU()(x)
+    # x = MaxPooling2D((2, 2))(x)
     x = BatchNormalization()(x)
-    x = MaxPooling2D((2, 2))(x)
 
-    x = BatchNormalization()(x)
-    x = Convolution2D(256, 3, 3, border_mode='same', activation='relu')(x)
+    x = Convolution2D(nf, 3, 3, border_mode='same', activation='relu')(x)
     # x = PReLU()(x)
+    # x = MaxPooling2D((1, 2))(x)
     x = BatchNormalization()(x)
-    x = MaxPooling2D((1, 2))(x)
 
     x = Convolution2D(8, 3, 3, border_mode='same')(x)
     x = Dropout(dropout)(x)
+
     x = GlobalAveragePooling2D()(x)
     fish_predictions = Activation('softmax')(x)
-    '''
 
-    x = BatchNormalization()(inp)
+    '''
     x = Flatten()(x)
 
-    x = Dense(1024)(x)
+    x = Dense(512, activation='relu')(x)
     x = BatchNormalization()(x)
-    x = PReLU()(x)
+    # x = PReLU()(x)
     x = Dropout(dropout)(x)
 
-    x = Dense(1024)(x)
+    x = Dense(512, activation='relu')(x)
     x = BatchNormalization()(x)
-    x = PReLU()(x)
+    # x = PReLU()(x)
     x = Dropout(dropout)(x)
     fish_predictions = Dense(8, activation='softmax', name='class')(x)
     '''
@@ -178,13 +177,6 @@ if __name__ == '__main__':
         EarlyStopping(monitor='val_loss', patience=config.early_stopping_patience),
     ]
 
-    ss = StratifiedShuffleSplit(n_splits=2,
-                                test_size=config.validation_split)
-    train_idx, valid_idx = next(ss.split(X_train_feat, np.argmax(y_train, 1)))
-    print('split',len(train_idx), len(valid_idx))
-    # get class weights
-    # class_w = get_class_w(y_train[train_idx])
-
     # create and train model
     print('Creating model...')
     model = create_model(np.shape(X_train_feat)[1:],
@@ -202,42 +194,109 @@ if __name__ == '__main__':
         Z = np.sum(weight)
         return weight / Z
 
+    def BcolzRandomSplit(X, y, batch_size, split_at=0.8):
+        class BcolzIter(object):
+            def __init__(self, X, y, idx_array, batch_size):
+                self.X = X
+                self.y = y
+                self.idx_array = idx_array
+                self.batch_size = batch_size
+                self.curr_chunk = 0
+                self.batch_chunks = batch_size // X.chunklen
+
+            def reset(self):
+                self.curr_chunk = 0
+
+            def len(self):
+                return int(np.ceil(len(self.idx_array)) / self.batch_chunks)
+
+            def next(self):
+                if self.curr_chunk >= len(self.idx_array):
+                    raise StopIteration()
+
+                if self.curr_chunk == 0:
+                    self.idx_array = np.random.permutation(self.idx_array)
+
+                X_batch = []
+                y_batch = []
+                for k in range(self.batch_chunks):
+                    if self.curr_chunk == X.nchunks:
+                        X_batch.append(self.X.leftover_array[:self.X.leftover_elements])
+                        curr_batch_size = self.X.leftover_elements
+                    else:
+                        X_batch.append(self.X.chunks[self.curr_chunk][:])
+                        curr_batch_size = self.X.chunklen
+                    y_start = self.curr_chunk * X.chunklen
+                    y_end = y_start + curr_batch_size
+                    y_batch.append(self.y[y_start:y_end])
+
+                    self.curr_chunk += 1
+                    if self.curr_chunk >= len(self.idx_array):
+                        break
+
+                X_batch = np.concatenate(X_batch)
+                y_batch = np.concatenate(y_batch)
+                return X_batch, y_batch
+
+            def __iter__(self):
+                return self
+
+            def __next__(self, *args, **kwargs):
+                return self.next(*args, **kwargs)
+
+        # impl
+        idx_array = np.random.permutation(X.nchunks + 1)
+        split_idx = int(len(idx_array) * split_at)
+        s1 = idx_array[0:split_idx]
+        s2 = idx_array[split_idx:]
+        return BcolzIter(X, y, s1, batch_size), BcolzIter(X, y, s2, batch_size)
+
+
     if not args.test:
         print('Training...')
-        print('dim:', y_train[train_idx].shape)
         class_w = np.array(len(classes) * [1./len(classes)])
-        y_valid = np.asarray(y_train[valid_idx][:])
-        print('y_valid', y_valid.shape)
-        true_l = np.argmax(y_valid, axis=1)
+        train, valid = BcolzRandomSplit(X_train_feat,
+                                        y_train,
+                                        config.batch_size,
+                                        (1.0 - config.validation_split))
 
         for epoch in range(config.nb_epoch):
-            learning_rate = config.lr
-            if epoch >= 4:
-                learning_rate = 0.001
             print('Epoch {} of {}'.format(epoch + 1, config.nb_epoch))
-            history = model.fit(X_train_feat[train_idx],
-                                y_train[train_idx],
-                                batch_size=config.batch_size,
-                                nb_epoch=1,
-                                verbose=1,
-                                class_weight=class_w)
-            print('Validation...')
+            train.reset()
+            valid.reset()
+            pbar = Progbar(train.len())
 
-            pred = model.predict(X_train_feat[valid_idx],
-                                 batch_size=config.batch_size,
-                                 verbose=1)
+            for X_batch, y_batch in train:
+                metrics = model.train_on_batch(X_batch, y_batch, class_weight=class_w)
+                pbar.add(1, values=[m for m in zip(model.metrics_names,
+                                                   metrics)])
+
+            print('Validation...')
+            pred = []
+            real = []
+            pbar = Progbar(valid.len())
+            for X_batch, y_batch in valid:
+                pred.extend(model.predict_on_batch(X_batch))
+                real.extend(y_batch)
+                pbar.add(1)
+
+            print('pred', np.shape(np.asarray(pred)))
+            print('real', np.shape(np.asarray(real)))
+            print(real[0:5])
             fp = np.zeros(len(classes))
             fn = np.zeros(len(classes))
             tp = np.zeros(len(classes))
             tn = np.zeros(len(classes))
 
             pred_l = np.argmax(pred, axis=1)
+            true_l = np.argmax(real, axis=1)
             for i in range(len(pred_l)):
                 if pred_l[i] != true_l[i]:
                     fp[pred_l[i]] += 1
                     fn[true_l[i]] += 1
                 else:
                     tp[pred_l[i]] += 1
+            print('')
             print('tp', [item for item in zip(classes, tp)])
             print('fn', [item for item in zip(classes, fn)])
             print('fp', [item for item in zip(classes, fp)])
@@ -252,18 +311,23 @@ if __name__ == '__main__':
                 accuracy[i] = (tp[i] + tn[i]) / (tp[i] + tn[i] + fp[i] + fn[i])
                 precision[i] = tp[i] / (tp[i] + fp[i])
 
+            print('')
             print('rec:', [item for item in zip(classes, recall)])
             print('pre:', [item for item in zip(classes, precision)])
             print('acc:', [item for item in zip(classes, accuracy)])
-
-            print('val_loss:', log_loss(y_valid, pred))
+            print(np.shape(np.array(real)))
+            print(np.shape(np.array(pred)))
+            print('val_loss:', log_loss(np.array(real), np.array(pred)))
             class_w = adaboostweight(class_w, fn, tp)
-            print('class_w:', [item for item in zip(classes, class_w)])
+            print('class_w:')
+            for item in zip(classes, class_w):
+                print('{}: {}'.format(item[0], item[1]))
 
         print('Training finished')
         print('Saving model...')
         save_model(model, history.history, args.info, args.index)
     else:
+        # model.load_weights('cache/boost_12_weights.h5')
         print('load test model here...')
 
     print('Testing...')
