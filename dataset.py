@@ -60,17 +60,12 @@ class ImageAugmenter(object):
 
 
     def get_bbox(self, path, label):
-        max_bbox = [0, 0, 0, 0]
+        bbox = [0, 0, 0, 0]
         if path in self.bboxes and label in self.bboxes[path]:
-            # get the largest bbox
-            max_area = 0
-            for bbox in self.bboxes[path][label]:
-                bbox_area = bbox[2] * bbox[3]
-                if bbox_area > max_area:
-                    max_area = bbox_area
-                    max_bbox = bbox
-
-        return np.asarray(max_bbox, dtype=np.float32)
+            # get random bbox
+            idx = np.random.randint(0, len(self.bboxes[path][label]))
+            bbox = self.bboxes[path][label][idx]
+        return np.asarray(bbox, dtype=np.float32)
 
 
     def get_label(self, path, categorical=True):
@@ -133,7 +128,7 @@ class ImageAugmenter(object):
                 t0 = time.time()
                 futures = {
                     executor.submit(self.augment, img_path):
-                    img_path for img_path in np.random.permutaion(self.images)
+                    img_path for img_path in np.random.permutation(self.images)
                 }
 
                 for f in concurrent.futures.as_completed(futures):
@@ -332,10 +327,10 @@ augmenter = ImageAugmenter('test_stg1', classes)
 augmenter.img_w = config.img_w
 augmenter.img_h = config.img_h
 augmenter.factor = config.augmentation_factor
-augmenter.rotation_range = 0.1 # config.augmentation_rotation_range
-augmenter.translation_range = 10 # config.augmentation_translation_range
-augmenter.x_scale_range = 1.1 # config.augmentation_x_scale_range
-augmenter.y_scale_range = 1.1 # config.augmentation_y_scale_range
+augmenter.rotation_range = config.augmentation_rotation_range
+augmenter.translation_range = 0 # config.augmentation_translation_range
+augmenter.x_scale_range = config.augmentation_x_scale_range
+augmenter.y_scale_range = config.augmentation_y_scale_range
 
 test_images, test_bboxes, test_labels, test_ids = augmenter.run(save=True)
 print('Test images shape: ', test_images.shape)
