@@ -34,13 +34,11 @@ def predict_vgg(X, model, batch_size):
 
 vgg = create_vgg(config.img_w, config.img_h)
 batch_size = 64
-
 print('Preprocessing train_images...')
 train_images = bcolz.open('train_images.bc')
 train_images_feat = predict_vgg(train_images, vgg, batch_size)
 utils.save_array('train_images_feat.bc', train_images_feat)
 print('Done')
-
 print('Preprocessing test_images...')
 test_images = bcolz.open('test_stg1_images.bc')
 test_images_feat = predict_vgg(test_images, vgg, batch_size)

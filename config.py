@@ -16,7 +16,7 @@ augmentation_translation_range = 15
 # model parameters
 validation_split=0.3
 batch_size = 32
-nb_epoch = 20
+nb_epoch = 30
 early_stopping_patience = 7
 dropout = 0.6
 lr = 0.001

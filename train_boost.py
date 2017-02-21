@@ -115,7 +115,6 @@ def run_test(models, X, ids, batch_size, id_name, bb, info_string, index):
         df_bboxes.loc[:, id_name] = pd.Series(np.tile(ids, len(models)))
         df_boxes = df_boxes.groupby(id_name).mean().reset_index()
 
-    print(df_labels.head())
     # save df_labels
     now = datetime.datetime.now()
     if not os.path.isdir('cache'):
@@ -123,7 +122,7 @@ def run_test(models, X, ids, batch_size, id_name, bb, info_string, index):
 
     filename = os.path.join('cache', info_string + '_' + str(index) + '_' +
                             str(now.strftime("%Y-%m-%d-%H-%M")) + '.csv')
-    print('Saving test result to: ', filename)
+    print('Saving test result to:', filename)
     df_labels.to_csv(filename, index=False)
 
     return df_labels, df_bboxes
@@ -208,7 +207,7 @@ if __name__ == '__main__':
                 self.curr_chunk = 0
 
             def len(self):
-                return int(np.ceil(len(self.idx_array)) / self.batch_chunks)
+                return int(np.ceil(len(self.idx_array) / self.batch_chunks))
 
             def next(self):
                 if self.curr_chunk >= len(self.idx_array):
@@ -260,16 +259,27 @@ if __name__ == '__main__':
                                         config.batch_size,
                                         (1.0 - config.validation_split))
 
+        history = {}
+        history['val_loss'] = []
+
         for epoch in range(config.nb_epoch):
             print('Epoch {} of {}'.format(epoch + 1, config.nb_epoch))
             train.reset()
             valid.reset()
             pbar = Progbar(train.len())
 
+            epoch_history = {}
             for X_batch, y_batch in train:
                 metrics = model.train_on_batch(X_batch, y_batch, class_weight=class_w)
                 pbar.add(1, values=[m for m in zip(model.metrics_names,
                                                    metrics)])
+                if not isinstance(metrics, list):
+                    metrics = [metrics]
+                for l, m in zip(model.metrics_names, metrics):
+                    epoch_history.setdefault(l, []).append(m)
+
+            for l, m in epoch_history.items():
+                history.setdefault(l, []).append(np.mean(m))
 
             print('Validation...')
             pred = []
@@ -280,13 +290,10 @@ if __name__ == '__main__':
                 real.extend(y_batch)
                 pbar.add(1)
 
-            print('pred', np.shape(np.asarray(pred)))
-            print('real', np.shape(np.asarray(real)))
-            print(real[0:5])
-            fp = np.zeros(len(classes))
-            fn = np.zeros(len(classes))
-            tp = np.zeros(len(classes))
-            tn = np.zeros(len(classes))
+            fp = pd.Series(0, index=classes, name='FP')
+            fn = pd.Series(0, index=classes, name='FN')
+            tp = pd.Series(0, index=classes, name='TP')
+            tn = pd.Series(0, index=classes, name='TN')
 
             pred_l = np.argmax(pred, axis=1)
             true_l = np.argmax(real, axis=1)
@@ -296,14 +303,10 @@ if __name__ == '__main__':
                     fn[true_l[i]] += 1
                 else:
                     tp[pred_l[i]] += 1
-            print('')
-            print('tp', [item for item in zip(classes, tp)])
-            print('fn', [item for item in zip(classes, fn)])
-            print('fp', [item for item in zip(classes, fp)])
 
-            recall = np.zeros(len(classes))
-            accuracy = np.zeros(len(classes))
-            precision = np.zeros(len(classes))
+            recall = pd.Series(0, index=classes, name='REC', dtype=np.float32)
+            accuracy = pd.Series(0, index=classes, name='ACC', dtype=np.float32)
+            precision = pd.Series(0, index=classes, name='PRE', dtype=np.float32)
 
             for i in range(len(classes)):
                 tn[i] = len(pred) - (tp[i] + fn[i] + fp[i])
@@ -311,21 +314,26 @@ if __name__ == '__main__':
                 accuracy[i] = (tp[i] + tn[i]) / (tp[i] + tn[i] + fp[i] + fn[i])
                 precision[i] = tp[i] / (tp[i] + fp[i])
 
+            print(pd.DataFrame([tp, tn, fp, fn]))
             print('')
-            print('rec:', [item for item in zip(classes, recall)])
-            print('pre:', [item for item in zip(classes, precision)])
-            print('acc:', [item for item in zip(classes, accuracy)])
-            print(np.shape(np.array(real)))
-            print(np.shape(np.array(pred)))
-            print('val_loss:', log_loss(np.array(real), np.array(pred)))
+            print(pd.DataFrame([accuracy, precision, recall]).
+                  applymap(lambda x: "{0:.3f}".format(x)))
+
+            val_loss = log_loss(np.array(real), np.array(pred))
+            history['val_loss'].append(val_loss)
+            print('')
+            print('val_loss:', val_loss)
+
             class_w = adaboostweight(class_w, fn, tp)
+            print('')
             print('class_w:')
             for item in zip(classes, class_w):
-                print('{}: {}'.format(item[0], item[1]))
+                print('{}:\t{:.4e}'.format(item[0], item[1]))
 
         print('Training finished')
         print('Saving model...')
-        save_model(model, history.history, args.info, args.index)
+        print(history)
+        save_model(model, history, args.info, args.index)
     else:
         # model.load_weights('cache/boost_12_weights.h5')
         print('load test model here...')
